@@ -35,11 +35,25 @@ private:
 	UPROPERTY(EditAnywhere)
 	float MaxDrivingForce = 10000;
 
+	// 초당 최대 회전 각도
+
+	UPROPERTY(EditAnywhere)
+	float MaxDegreesPerSecond = 90;
+
+	// 저항계수 // 높아질수록 저항이 세진다 // 단위 : Kg/m
+	UPROPERTY(EditAnywhere)
+	float MaxDegreesPerSecond = 16;
+
 	void MoveForward(float Value);
+	void MoveRight(float Value);
 
 	FVector Velocity;
 
 	float Throttle;
+	float SteeringThrow;
+
+	Fvector GetResistance();
 
 	void UpdateLocationFromVelocity(float DeltaTime);
+	void ApplyRotation(float DeltaTime);
 };
