@@ -35,14 +35,17 @@ private:
 	UPROPERTY(EditAnywhere)
 	float MaxDrivingForce = 10000;
 
-	// 초당 최대 회전 각도
-
+	// 최대로 꺾은 자동차의 회전 반경의 최소 반지름 // 단위 : m
 	UPROPERTY(EditAnywhere)
-	float MaxDegreesPerSecond = 90;
+	float MinTurningRadius = 10;
 
-	// 저항계수 // 높아질수록 저항이 세진다 // 단위 : Kg/m
+	// 공기 저항계수 // 높아질수록 저항이 세진다 // 단위 : Kg/m
 	UPROPERTY(EditAnywhere)
-	float MaxDegreesPerSecond = 16;
+	float DragCoefficient = 16;
+
+	// 구름 저항 계수// 높아질수록 저항이 더 커진다.
+	UPROPERTY(EditAnywhere)
+	float RollingResistanceCoefficient = 0.015;
 
 	void MoveForward(float Value);
 	void MoveRight(float Value);
@@ -52,7 +55,8 @@ private:
 	float Throttle;
 	float SteeringThrow;
 
-	Fvector GetResistance();
+	FVector GetAirResistance();
+	FVector GetRollingResistance();
 
 	void UpdateLocationFromVelocity(float DeltaTime);
 	void ApplyRotation(float DeltaTime);
