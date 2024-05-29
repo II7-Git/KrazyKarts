@@ -47,6 +47,9 @@ private:
 	UPROPERTY(EditAnywhere)
 	float RollingResistanceCoefficient = 0.015;
 
+	void MoveForward(float Value);
+	void MoveRight(float Value);
+
 	// ServerRPC임을 명시
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_MoveForward(float Value);
