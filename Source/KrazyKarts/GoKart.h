@@ -57,14 +57,20 @@ private:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_MoveRight(float Value);
 
-	FVector Velocity;
-
-	float Throttle;
-	float SteeringThrow;
-
 	FVector GetAirResistance();
 	FVector GetRollingResistance();
 
 	void UpdateLocationFromVelocity(float DeltaTime);
 	void ApplyRotation(float DeltaTime);
+
+	FVector Velocity;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedTransform)
+	FTransform ReplicatedTransform;
+
+	UFUNCTION()
+	void OnRep_ReplicatedTransform();
+
+	float Throttle;
+	float SteeringThrow;
 };
