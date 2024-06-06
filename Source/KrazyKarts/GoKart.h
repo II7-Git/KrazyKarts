@@ -63,6 +63,7 @@ private:
 	void UpdateLocationFromVelocity(float DeltaTime);
 	void ApplyRotation(float DeltaTime);
 
+	UPROPERTY(Replicated)
 	FVector Velocity;
 
 	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedTransform)
@@ -71,6 +72,8 @@ private:
 	UFUNCTION()
 	void OnRep_ReplicatedTransform();
 
+	UPROPERTY(Replicated)
 	float Throttle;
+	UPROPERTY(Replicated)
 	float SteeringThrow;
 };
