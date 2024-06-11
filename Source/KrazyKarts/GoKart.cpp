@@ -6,6 +6,8 @@
 
 #include "DrawDebugHelpers.h"
 #include "Net/UnrealNetwork.h"
+
+#include "GameFramework/GameStateBase.h"
 // Sets default values
 AGoKart::AGoKart()
 {
@@ -29,10 +31,7 @@ void AGoKart::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeP
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	// 복사할 프로퍼티 등록
-	DOREPLIFETIME(AGoKart, ReplicatedTransform);
-	DOREPLIFETIME(AGoKart, Velocity);
-	DOREPLIFETIME(AGoKart, Throttle);
-	DOREPLIFETIME(AGoKart, SteeringThrow);
+	DOREPLIFETIME(AGoKart, ServerState);
 }
 
 FString GetEnumText(ENetRole Role)
@@ -57,8 +56,50 @@ void AGoKart::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (GetLocalRole() == ROLE_AutonomousProxy)
+	{
+		FGoKartMove Move = CreateMove(DeltaTime);
+		SimulateMove(Move);
+
+		UnacknowledgedMoves.Add(Move);
+		Server_SendMove(Move);
+	}
+
+	// 서버이면서 동시에 특정 Pawn을 조종하고 있는 경우
+	if (GetLocalRole() == ROLE_Authority && IsLocallyControlled())
+	{
+		FGoKartMove Move = CreateMove(DeltaTime);
+		Server_SendMove(Move);
+	}
+
+	/*
+	각 클라이언트에서 조종하고 있지 않은 폰들이 OnRep_ServerState로 업데이트된
+	정보에 따라서 예측해서 동작을 취하여 자연스럽게 움직이게 하기
+	*/
+	if (GetLocalRole() == ROLE_SimulatedProxy)
+	{
+		SimulateMove(ServerState.LastMove);
+	}
+	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this, FColor::White, DeltaTime);
+}
+
+void AGoKart::OnRep_ServerState()
+{
+	SetActorTransform(ServerState.Transform);
+	Velocity = ServerState.Velocity;
+
+	ClearAcknowledgedMoves(ServerState.LastMove);
+
+	for (const FGoKartMove &Move : UnacknowledgedMoves)
+	{
+		SimulateMove(Move);
+	}
+}
+
+void AGoKart::SimulateMove(const FGoKartMove &Move)
+{
 	// 전진 적용
-	FVector Force = GetActorForwardVector() * MaxDrivingForce * Throttle;
+	FVector Force = GetActorForwardVector() * MaxDrivingForce * Move.Throttle;
 
 	// 공기 저항 적용
 	Force += GetAirResistance();
@@ -68,24 +109,41 @@ void AGoKart::Tick(float DeltaTime)
 
 	FVector Acceleration = Force / Mass;
 
-	Velocity = Velocity + Acceleration * DeltaTime;
+	Velocity = Velocity + Acceleration * Move.DeltaTime;
 
-	ApplyRotation(DeltaTime);
+	ApplyRotation(Move.DeltaTime, Move.SteeringThrow);
 
-	UpdateLocationFromVelocity(DeltaTime);
-
-	// 서버라면
-	if (HasAuthority())
-	{
-		ReplicatedTransform = GetActorTransform();
-	}
-
-	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this, FColor::White, DeltaTime);
+	UpdateLocationFromVelocity(Move.DeltaTime);
 }
 
-void AGoKart::OnRep_ReplicatedTransform()
+FGoKartMove AGoKart::CreateMove(float DeltaTime)
 {
-	SetActorTransform(ReplicatedTransform);
+	FGoKartMove Move;
+	Move.DeltaTime = DeltaTime;
+	Move.SteeringThrow = SteeringThrow;
+	Move.Throttle = Throttle;
+	Move.Time = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+
+	return Move;
+}
+
+/*
+서버에서 새로운 Move 정보가 왔을 때 이 Move보다
+동작시간이 오래된 Move들을 지워서 되돌아가는 현상 방지
+*/
+void AGoKart::ClearAcknowledgedMoves(FGoKartMove LastMove)
+{
+	TArray<FGoKartMove> NewMoves;
+
+	for (const FGoKartMove &Move : UnacknowledgedMoves)
+	{
+		if (Move.Time > LastMove.Time)
+		{
+			NewMoves.Add(Move);
+		}
+	}
+
+	UnacknowledgedMoves = NewMoves;
 }
 
 FVector AGoKart::GetAirResistance()
@@ -103,7 +161,7 @@ FVector AGoKart::GetRollingResistance()
 }
 
 // 회전 반경을 고려한 회전 구현
-void AGoKart::ApplyRotation(float DeltaTime)
+void AGoKart::ApplyRotation(float DeltaTime, float MoveSteeringThrow)
 {
 
 	// 속력에 시간을 곱해서 이동 거리 계산
@@ -111,7 +169,7 @@ void AGoKart::ApplyRotation(float DeltaTime)
 	// EX ) 전진이라면 +, 후진이라면 -값을 리턴하게된다.
 	float DeltaLocation = FVector::DotProduct(GetActorForwardVector(), Velocity) * DeltaTime;
 	// 실제 회전 각도 = 이동 거리/회전 반경*핸들의 회전각도
-	float RotationAngle = DeltaLocation / MinTurningRadius * SteeringThrow;
+	float RotationAngle = DeltaLocation / MinTurningRadius * MoveSteeringThrow;
 	// FRotator로는 못하는 여러 축에 따른 회전이 가능
 	// 현재 액터의 업 벡터에서 라디안 만큼 회전
 	FQuat RotationDelta(GetActorUpVector(), RotationAngle);
@@ -147,32 +205,26 @@ void AGoKart::SetupPlayerInputComponent(UInputComponent *PlayerInputComponent)
 void AGoKart::MoveForward(float Value)
 {
 	Throttle = Value;
-	Server_MoveForward(Value);
+	// Server_SendMove(Move);
 }
 void AGoKart::MoveRight(float Value)
 {
 	SteeringThrow = Value;
-	Server_MoveRight(Value);
+	// Server_SendMove(Move);
 }
 
-void AGoKart::Server_MoveForward_Implementation(float Value)
+void AGoKart::Server_SendMove_Implementation(FGoKartMove Move)
 {
-	Throttle = Value;
-	// Velocity = GetActorForwardVector() * 20 * Value;
+	SimulateMove(Move);
+
+	ServerState.LastMove = Move;
+	ServerState.Transform = GetActorTransform();
+	ServerState.Velocity = Velocity;
+	// TODO  :  Update Last Move
 }
 
-// MoveForward의 유효성 검증으로 치트 방지
-bool AGoKart::Server_MoveForward_Validate(float Value)
+// SendMove의 유효성 검증으로 치트 방지
+bool AGoKart::Server_SendMove_Validate(FGoKartMove Move)
 {
-	return FMath::Abs(Value) <= 1;
-}
-
-void AGoKart::Server_MoveRight_Implementation(float Value)
-{
-	SteeringThrow = Value;
-}
-
-bool AGoKart::Server_MoveRight_Validate(float Value)
-{
-	return FMath::Abs(Value) <= 1;
+	return true;
 }
