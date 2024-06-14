@@ -50,7 +50,7 @@ void UGoKartMovementReplicator::TickComponent(float DeltaTime, ELevelTick TickTy
 	*/
 	if (GetOwnerRole() == ROLE_SimulatedProxy)
 	{
-		MovementComponent->SimulateMove(ServerState.LastMove);
+		ClientTick(DeltaTime);
 	}
 }
 
@@ -62,6 +62,46 @@ void UGoKartMovementReplicator::UpdateServerState(const FGoKartMove &Move)
 	// TODO  :  Update Last Move
 }
 
+void UGoKartMovementReplicator::ClientTick(float DeltaTime)
+{
+	ClientTimeSinceUpdate += DeltaTime;
+
+	// KINDA_SMALL_NUMBER : 굉장히 작은수를 뜻함 (0.000000001)
+	// 너무 작은수로 나누어서 선형보간에서 오류가 생기는 것을 방지
+	if (ClientTimeBetweenLastUpdates < KINDA_SMALL_NUMBER)
+		return;
+
+	if (MovementComponent == nullptr)
+		return;
+
+	// 전후진 속도를 고려한 CubicInterp을 사용한 보간
+	FVector TargetLocation = ServerState.Transform.GetLocation();
+	float LerpRatio = ClientTimeSinceUpdate / ClientTimeBetweenLastUpdates;
+	FVector StartLocation = ClientStartTransform.GetLocation();
+
+	// CubicInterp을 사용하기 위한 도함수 계산
+	float VelocityToDerivative = ClientTimeBetweenLastUpdates * 100;
+	FVector StartDerivative = ClientStartVelocity * VelocityToDerivative;
+	FVector TargetDerivative = ServerState.Velocity * VelocityToDerivative;
+
+	FVector NewLocation = FMath::CubicInterp(StartLocation, StartDerivative, TargetLocation, TargetDerivative, LerpRatio);
+
+	GetOwner()->SetActorLocation(NewLocation);
+
+	// 보간된 속도 계산
+	FVector NewDerivative = FMath::CubicInterpDerivative(StartLocation, StartDerivative, TargetLocation, TargetDerivative, LerpRatio);
+	FVector NewVelocity = NewDerivative / VelocityToDerivative;
+	MovementComponent->SetVelocity(NewVelocity);
+
+	// 회전 선형보간
+	FQuat TargetRotation = ServerState.Transform.GetRotation();
+	FQuat StartRotation = ClientStartTransform.GetRotation();
+
+	FQuat NewRotation = FQuat::Slerp(StartRotation, TargetRotation, LerpRatio);
+
+	GetOwner()->SetActorRotation(NewRotation);
+}
+
 void UGoKartMovementReplicator::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -71,7 +111,22 @@ void UGoKartMovementReplicator::GetLifetimeReplicatedProps(TArray<FLifetimePrope
 
 void UGoKartMovementReplicator::OnRep_ServerState()
 {
+	switch (GetOwnerRole())
+	{
+	case ROLE_AutonomousProxy:
+		AutonomousProxy_OnRep_ServerState();
+		break;
 
+	case ROLE_SimulatedProxy:
+		SimulatedProxy_OnRep_ServerState();
+		break;
+	default:
+		break;
+	}
+}
+
+void UGoKartMovementReplicator::AutonomousProxy_OnRep_ServerState()
+{
 	if (MovementComponent == nullptr)
 		return;
 
@@ -84,6 +139,17 @@ void UGoKartMovementReplicator::OnRep_ServerState()
 	{
 		MovementComponent->SimulateMove(Move);
 	}
+}
+void UGoKartMovementReplicator::SimulatedProxy_OnRep_ServerState()
+{
+	if (MovementComponent == nullptr)
+		return;
+
+	ClientTimeBetweenLastUpdates = ClientTimeSinceUpdate;
+	ClientTimeSinceUpdate = 0;
+
+	ClientStartTransform = GetOwner()->GetActorTransform();
+	ClientStartVelocity = MovementComponent->GetVelocity();
 }
 
 /*
