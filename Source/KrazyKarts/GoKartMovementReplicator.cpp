@@ -217,6 +217,8 @@ void UGoKartMovementReplicator::Server_SendMove_Implementation(FGoKartMove Move)
 {
 	if (MovementComponent == nullptr)
 		return;
+
+	ClientSimulatedTime += Move.DeltaTime;
 	MovementComponent->SimulateMove(Move);
 
 	UpdateServerState(Move);
@@ -225,5 +227,19 @@ void UGoKartMovementReplicator::Server_SendMove_Implementation(FGoKartMove Move)
 // SendMove의 유효성 검증으로 치트 방지
 bool UGoKartMovementReplicator::Server_SendMove_Validate(FGoKartMove Move)
 {
+	float ProposedTime = ClientSimulatedTime + Move.DeltaTime;
+	bool ClientNotRunningAhead = ProposedTime < GetWorld()->TimeSeconds;
+	if (!ClientNotRunningAhead)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Client is running too fast."));
+		return false;
+	}
+
+	if (!Move.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Received invalid move."));
+		return false;
+	}
+
 	return true;
 }
